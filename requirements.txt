@@ -1,0 +1,5 @@
+TTS
+fastapi
+uvicorn
+python-multipart
+soundfile
