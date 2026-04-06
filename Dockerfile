@@ -15,6 +15,9 @@ COPY requirements.txt ./
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the model to save time during runtime
+RUN python -c "from transformers import AutoProcessor, BarkModel; model_id='prince-canuma/bark-small'; AutoProcessor.from_pretrained(model_id); BarkModel.from_pretrained(model_id)"
+
 # Create a /tmp directory for saving temporary audio files
 RUN mkdir -p /tmp && chmod 777 /tmp
 

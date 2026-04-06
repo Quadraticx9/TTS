@@ -15,13 +15,14 @@ processor = None
 model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-@app.on_event("startup")
-def load_resources():
+def get_model():
     global processor, model
-    print(f"Loading {model_id} on {device}...")
-    processor = AutoProcessor.from_pretrained(model_id)
-    model = BarkModel.from_pretrained(model_id).to(device)
-    print("Model loaded successfully!")
+    if processor is None or model is None:
+        print(f"Loading {model_id} on {device}...")
+        processor = AutoProcessor.from_pretrained(model_id)
+        model = BarkModel.from_pretrained(model_id).to(device)
+        print("Model loaded successfully!")
+    return processor, model
 
 class TTSRequest(BaseModel):
     text: str
@@ -33,18 +34,19 @@ def generate_audio(request: TTSRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
     
     try:
+        proc, mod = get_model()
         # Process the input text
-        inputs = processor(request.text, voice_preset=request.voice_preset).to(device)
+        inputs = proc(request.text, voice_preset=request.voice_preset).to(device)
         
         # Generate audio
         with torch.no_grad():
-            audio_array = model.generate(**inputs)
+            audio_array = mod.generate(**inputs)
         
         # Convert to numpy array
         audio_array = audio_array.cpu().numpy().squeeze()
         
         # Get sample rate
-        sample_rate = model.generation_config.sample_rate
+        sample_rate = mod.generation_config.sample_rate
         
         # Save audio to a temporary file
         filename = f"/tmp/{uuid.uuid4()}.wav"
@@ -70,4 +72,8 @@ def generate_audio(request: TTSRequest):
 
 @app.get("/health")
 def health():
+    return {"status": "healthy", "device": device}
+
+@app.get("/")
+def read_root():
     return {"status": "healthy", "device": device}
