@@ -25,7 +25,7 @@ def load_resources():
 
 class TTSRequest(BaseModel):
     text: str
-    voice_preset: str = "v2/en_speaker_6"  # Example preset, can be changed
+    voice_preset: str = "en_speaker_6"
 
 @app.post("/generate")
 def generate_audio(request: TTSRequest):
@@ -57,7 +57,16 @@ def generate_audio(request: TTSRequest):
             filename="output.wav"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        message = str(e)
+        if "speaker_embeddings" in message and "does not exists" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid voice_preset for this model. Try presets like 'en_speaker_6' "
+                    "instead of 'v2/en_speaker_6'."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=message)
 
 @app.get("/health")
 def health():
