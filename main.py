@@ -1,31 +1,43 @@
 import os
+# Force HF_HOME before anything else imports HuggingFace
+os.environ["HF_HOME"] = "/tmp/huggingface"
+os.environ["TMPDIR"] = "/tmp"
+os.environ["TRANSFORMERS_CACHE"] = "/tmp/huggingface"
+os.environ["XDG_CACHE_HOME"] = "/tmp"
+
 import uuid
+import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import torch
+from transformers import AutoProcessor, BarkModel
 import scipy.io.wavfile as scipy_wav
 
 app = FastAPI(title="Bark Small TTS API")
 
-# Global variables to store the model and processor
 model_id = "prince-canuma/bark-small"
 processor = None
 model = None
-device = "cpu"  # Will be updated when model loads
+device = "cuda" if torch.cuda.is_available() else "cpu"
 is_ready = False
 
-def get_model():
-    global processor, model, is_ready, device
-    if not is_ready:
-        import torch
-        from transformers import AutoProcessor, BarkModel
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Loading {model_id} on {device}...")
-        processor = AutoProcessor.from_pretrained(model_id)
-        model = BarkModel.from_pretrained(model_id).to(device)
+def load_model_bg():
+    global processor, model, is_ready
+    print(f"Loading {model_id} on {device}...")
+    try:
+        # Pre-create cache dir just in case
+        os.makedirs("/tmp/huggingface", exist_ok=True)
+        processor = AutoProcessor.from_pretrained(model_id, cache_dir="/tmp/huggingface")
+        model = BarkModel.from_pretrained(model_id, cache_dir="/tmp/huggingface").to(device)
         is_ready = True
         print("Model loaded successfully!")
-    return processor, model, device
+    except Exception as e:
+        print(f"Error loading model: {e}")
+
+@app.on_event("startup")
+def load_resources():
+    threading.Thread(target=load_model_bg, daemon=True).start()
 
 class TTSRequest(BaseModel):
     text: str
@@ -33,18 +45,18 @@ class TTSRequest(BaseModel):
 
 @app.post("/generate")
 def generate_audio(request: TTSRequest):
+    if not is_ready:
+        raise HTTPException(status_code=503, detail="Model is still downloading/loading. Please try again in 30-60 seconds.")
+        
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
     
     try:
-        import torch
-        proc, mod, dev = get_model()
-        
-        inputs = proc(request.text, voice_preset=request.voice_preset).to(dev)
+        inputs = processor(request.text, voice_preset=request.voice_preset).to(device)
         with torch.no_grad():
-            audio_array = mod.generate(**inputs)
+            audio_array = model.generate(**inputs)
         audio_array = audio_array.cpu().numpy().squeeze()
-        sample_rate = mod.generation_config.sample_rate
+        sample_rate = model.generation_config.sample_rate
         
         filename = f"/tmp/{uuid.uuid4()}.wav"
         scipy_wav.write(filename, sample_rate, audio_array)
