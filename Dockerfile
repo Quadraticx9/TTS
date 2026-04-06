@@ -10,6 +10,10 @@ COPY requirements.txt ./
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set environment variables so HuggingFace cache writes to /tmp instead of read-only /app
+ENV TRANSFORMERS_CACHE=/tmp
+ENV HF_HOME=/tmp
+
 # Pre-download the model at build time to make app startup drastically faster and prevent Leapcell timeout
 RUN python -c "from transformers import AutoProcessor, BarkModel; AutoProcessor.from_pretrained('prince-canuma/bark-small'); BarkModel.from_pretrained('prince-canuma/bark-small')"
 
