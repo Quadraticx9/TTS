@@ -3,23 +3,23 @@ FROM python:3.10-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsndfile1 \
+    libsndfile1 git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt huggingface_hub
 
-RUN pip install --no-cache-dir -r requirements.txt
+# We copy the download script here and bake the model right into the Linux image
+# This completely bypasses Github's 100MB file size limit for pushing models,
+# while completely skipping the download locally
+COPY download_model.py ./
+RUN python download_model.py
 
-# Tell Hugging Face to use /tmp as the cache directory since /app might be read-only in Leapcell
-ENV HF_HOME="/tmp/huggingface"
-ENV TMPDIR="/tmp"
-
-# Pre-download the model at build time to make app startup drastically faster and prevent Leapcell timeout
-RUN python -c "import os; os.environ['HF_HOME'] = '/tmp/huggingface'; from transformers import AutoProcessor, BarkModel; AutoProcessor.from_pretrained('prince-canuma/bark-small'); BarkModel.from_pretrained('prince-canuma/bark-small')"
-
-RUN chmod -R 777 /tmp
-
+# Now copy the app
 COPY main.py ./
+
+RUN mkdir -p /tmp && chmod 777 /tmp
+ENV TMPDIR="/tmp"
 
 EXPOSE 8080
 

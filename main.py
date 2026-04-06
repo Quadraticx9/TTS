@@ -1,12 +1,7 @@
 import os
-# Force HF_HOME before anything else imports HuggingFace
-os.environ["HF_HOME"] = "/tmp/huggingface"
 os.environ["TMPDIR"] = "/tmp"
-os.environ["TRANSFORMERS_CACHE"] = "/tmp/huggingface"
-os.environ["XDG_CACHE_HOME"] = "/tmp"
 
 import uuid
-import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -16,37 +11,33 @@ import scipy.io.wavfile as scipy_wav
 
 app = FastAPI(title="Bark Small TTS API")
 
-model_id = "prince-canuma/bark-small"
+# We point directly to the folder we downloaded during Docker build
+model_path = "/app/model"
 processor = None
 model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
-is_ready = False
 
-def load_model_bg():
-    global processor, model, is_ready
-    print(f"Loading {model_id} on {device}...")
-    try:
-        # Pre-create cache dir just in case
-        os.makedirs("/tmp/huggingface", exist_ok=True)
-        processor = AutoProcessor.from_pretrained(model_id, cache_dir="/tmp/huggingface")
-        model = BarkModel.from_pretrained(model_id, cache_dir="/tmp/huggingface").to(device)
-        is_ready = True
+def load_model():
+    global processor, model
+    # We lazy-load the model when the FIRST request hits
+    # This guarantees the server binds port 8080 instantly and passes Leapcell's 9s health check!
+    if model is None:
+        print(f"Loading {model_path} into RAM on {device}...")
+        processor = AutoProcessor.from_pretrained(model_path)
+        model = BarkModel.from_pretrained(model_path).to(device)
         print("Model loaded successfully!")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-
-@app.on_event("startup")
-def load_resources():
-    threading.Thread(target=load_model_bg, daemon=True).start()
 
 class TTSRequest(BaseModel):
     text: str
-    voice_preset: str = "en_speaker_6"  
+    voice_preset: str = "v2/en_speaker_6"  
 
 @app.post("/generate")
 def generate_audio(request: TTSRequest):
-    if not is_ready:
-        raise HTTPException(status_code=503, detail="Model is still downloading/loading. Please try again in 30-60 seconds.")
+    try:
+        # Takes ~4 seconds ONLY on the very first request
+        load_model()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load model from disk: {str(e)}")
         
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
@@ -64,12 +55,15 @@ def generate_audio(request: TTSRequest):
         return FileResponse(path=filename, media_type="audio/wav", filename="output.wav")
     except Exception as e:
         message = str(e)
-        if "speaker_embeddings" in message and "does not exists" in message:
-            raise HTTPException(status_code=400, detail="Invalid voice_preset for this model. Try presets like 'en_speaker_6' or 'hi_speaker_0'.")
+        if "speaker_embeddings" in message:
+            # Helpful error if voice preset uses wrong format
+            raise HTTPException(status_code=400, detail=f"Invalid voice_preset format. Error: {message}")
         raise HTTPException(status_code=500, detail=message)
 
 @app.get("/")
 @app.get("/health")
 @app.get("/kaithheathcheck")
 def health():
-    return {"status": "healthy", "ready": is_ready, "device": device}
+    # If the model variable is populated, ready is True.
+    # Otherwise False, until the first /generate request.
+    return {"status": "healthy", "ready": model is not None, "device": device}
