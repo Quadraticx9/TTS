@@ -12,11 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Tell Hugging Face to use /tmp as the cache directory since /app might be read-only in Leapcell
 ENV HF_HOME="/tmp/huggingface"
+ENV TMPDIR="/tmp"
 
 # Pre-download the model at build time to make app startup drastically faster and prevent Leapcell timeout
 RUN python -c "import os; os.environ['HF_HOME'] = '/tmp/huggingface'; from transformers import AutoProcessor, BarkModel; AutoProcessor.from_pretrained('prince-canuma/bark-small'); BarkModel.from_pretrained('prince-canuma/bark-small')"
 
-RUN mkdir -p /tmp && chmod 777 /tmp
+RUN chmod -R 777 /tmp
 
 COPY main.py ./
 
