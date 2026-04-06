@@ -1,5 +1,6 @@
-TTS
 fastapi
 uvicorn
-python-multipart
-soundfile
+torch
+transformers
+scipy
+pydantic
